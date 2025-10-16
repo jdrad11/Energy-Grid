@@ -1,7 +1,6 @@
 # energy grid starter code
 from time import sleep
 import threading
-import sys
 
 # constant variables
 production_rate = 100
@@ -68,18 +67,8 @@ class energy_grid:
     def stop_grid(self):
         self.running = False
 
-# simulate running a service that reaches out and draws power
-def run_power_drawing_service(grid: energy_grid, service_name: str, amount: int):
-    print(f'[{service_name.upper()}] Service simulator started.')
-    
-    # this cycle will run until the service is shut down
-    while grid.running:
-        grid.use_power_service(service_name, amount)
-        sleep(cycle_duration)
-    
-    print(f'[{service_name.upper()}] Service simulator shutting down now...')
-
 # run the energy grid service
+# Original testing function
 def run_energy_grid():
     # spawn the energy grid object
     grid = energy_grid()
