@@ -1,3 +1,4 @@
+#!/bin/bash
 # setup script for energy grid systemd service (run with sudo)
 # assumes files are in the current directory (run from repo directory)
 
