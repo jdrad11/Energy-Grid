@@ -19,4 +19,7 @@ touch /var/log/energy-grid/grid.log
 chown -R grid:grid /var/log/energy-grid
 echo "service logging configured..."
 
+echo "trying to start energy-grid.service..."
+systemctl start energy-grid.service
+
 echo "done!"
