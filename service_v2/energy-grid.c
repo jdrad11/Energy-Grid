@@ -74,18 +74,18 @@ int main() {
 	pthread_mutex_init(&lock, NULL);
 
     while (true) {
-	// Accept a single client connection (single-threaded)
-	client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
-	if (client_socket < 0) {
-	    perror("Client accept failed");
-	    close(server_socket);
-	    exit(EXIT_FAILURE);
-	}
+		// Accept a single client connection (single-threaded)
+		client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
+		if (client_socket < 0) {
+	    	perror("Client accept failed");
+	    	close(server_socket);
+	    	exit(EXIT_FAILURE);
+		}
 
-	printf("Client connected!\n");
+		printf("Client connected!\n");
 
-	// Handle communication with the connected client
-	handle_client(client_socket);
+		// Handle communication with the connected client
+		handle_client(client_socket);
     }
 
     // Close the server socket
