@@ -1,0 +1,10 @@
+here are the things to do for development of the c implementation
+boiler plate code is from basic chat server implementation of sockets
+
+x add lock and energy grid variables in main to pass to functions
+- add generator function and implement it as a background thread
+- update handle client function to correctly deal with requests
+- add lock to prevent race conditions
+- implement loop in main for keep the server accepting reqests
+- add error catching to main to prevent crashes from malformed requests
+- clean up code to make it make sense for this service
