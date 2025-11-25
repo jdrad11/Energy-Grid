@@ -10,8 +10,8 @@ WorkingDirectory=/opt/energy-grid/
 ExecStart=/opt/energy-grid/energy-grid
 Restart=no
 RestartSec=5
-StandardOutput=append:/var/log/energy-grid/grid.log
-StandardError=append:/var/log/energy-grid/grid.log
+StandardOutput=file:/var/log/energy-grid/grid.log
+StandardError=file:/var/log/energy-grid/grid.log
 
 [Install]
 WantedBy=multi-user.target

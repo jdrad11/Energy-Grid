@@ -126,7 +126,9 @@ void handle_power_request(int client_socket) {
 }
 
 int main() {
-    int server_socket, client_socket;
+	setvbuf(stdout, NULL, _IOLBF, 0);
+	setvbuf(stdout, NULL, _IONBF, 0);
+	int server_socket, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
 
