@@ -56,7 +56,7 @@ void* power_generator(void* arg) {
 int draw_power(int amount) {
 	// use the lock to prevent race conditions
 	pthread_mutex_lock(&lock);
-
+	
 	// enough power available from just this cycle's production
 	if (amount <= cycle_power) {
 		cycle_power -= amount;
@@ -117,7 +117,14 @@ void handle_power_request(int client_socket) {
 		printf("[SERVICE] Requested %d power.\n", requested_amount);
 
 		// try to draw the requested amount of power
-		char result = draw_power(requested_amount);
+		char result;
+		if (requested_amount <= 0) {
+			// filter input and disallow negative requests
+			printf("[SERVICE] Received a malformed or negative request; aborting power draw.\n");
+			result = '0';
+		} else {
+			result = draw_power(requested_amount);
+		}
 
 		// send back '1' for success or '0' for failure
 		write(client_socket, &result, 1);
@@ -172,7 +179,7 @@ int main() {
 	pthread_create(&generator, NULL, power_generator, NULL);
 
 	// keep the service listening for connections infinitely
-    while (true) {
+    while (1) {
 		// Accept a single client connection (single-threaded)
 		client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
 		if (client_socket < 0) {
