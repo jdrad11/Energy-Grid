@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <stdint.h>
 
 // definitions for socket
 #define PORT 8080
@@ -22,6 +23,20 @@ pthread_mutex_t lock;
 int cycle_power;
 int battery_power;
 
+// stucture for receiving requests over socket protocol
+// expects type 1 for power draw request
+typedef struct __attribute__((packed)) {
+	uint8_t req_type;
+	uint32_t pwr_amount;
+} PowerRequest;
+
+// structure for sending responses over socket protocol
+// mirrors request fields and sends 0 for failure, 1 for success, 2 for illegal or malformed request
+typedef struct __attribute__((packed)) {
+	uint8_t req_type;
+	uint32_t pwr_amount;
+	uint8_t status_code;
+} PowerResponse;
 
 // power generator function (ran as a thread)
 void* power_generator(void* arg) {
@@ -52,8 +67,8 @@ void* power_generator(void* arg) {
 	}
 }
 
-// attempts to draw <amount> power from the grid and returns a status code
-int draw_power(int amount) {
+// attempts to draw <amount> power from the grid and returns a status code (1 for success, 0 for failure)
+uint8_t draw_power(uint32_t amount) {
 	// use the lock to prevent race conditions
 	pthread_mutex_lock(&lock);
 	
@@ -62,7 +77,7 @@ int draw_power(int amount) {
 		cycle_power -= amount;
 		printf("[SERVICE] Drew %d power from current cycle. Remaining in cycle: %d power.\n", amount, cycle_power);
 		pthread_mutex_unlock(&lock);
-		return '1';
+		return 1;
 	}
 
 	// not fully enough power from just this cycle's production, use some battery power
@@ -71,65 +86,62 @@ int draw_power(int amount) {
 		cycle_power = 0;
 		printf("[SERVICE] Falling back to backup battery power. Current cycle exhausted. Remaining in battery: %d power.\n", battery_power);
 		pthread_mutex_unlock(&lock);
-		return '1';
+		return 1;
 	}
 
 	// not enough power available from this cycle and backup battery, fail the request
 	else {
 		printf("[SERVICE] Failed to draw power. Insufficient power available.\n");
 		pthread_mutex_unlock(&lock);
-		return '0';
+		return 0;
 	}
 }
 
-/** original client handler function, commented out but left for now for reference
-void handle_client(int client_socket) {
-    char buffer[BUFFER_SIZE];
-    int bytes_read;
-
-    while ((bytes_read = read(client_socket, buffer, BUFFER_SIZE - 1)) > 0) {
-        buffer[bytes_read] = '\0';  // Null-terminate the message
-        printf("Client: %s\n", buffer);  // Print the message received from the client
-
-        // Echo the message back to the client
-        write(client_socket, buffer, strlen(buffer));
-
-        // If the client sends "exit", break the loop and close the connection
-        if (strncmp(buffer, "exit", 4) == 0) {
-            printf("Client disconnected.\n");
-            break;
-        }
-    }
-
-    close(client_socket);  // Close the client socket when done
-}
-**/
-
-// handles requests for drawing power from the grid
+// handle requests to the socket
 void handle_power_request(int client_socket) {
-	char buffer[BUFFER_SIZE];
+
+	PowerRequest req;
+	PowerResponse resp;
 	int bytes_read;
 
-	// expects a power amount in string form, ex: "15"
-	if ((bytes_read = read(client_socket, buffer, BUFFER_SIZE - 1)) > 0) {
-		buffer[bytes_read] = '\0';
-		int requested_amount = atoi(buffer);
-		printf("[SERVICE] Requested %d power.\n", requested_amount);
+	// collect bytes to protocol spec (currently vulnerable to DOS by hanging because of MSG_WAITALL flag)
+	bytes_read = recv(client_socket, &req, sizeof(PowerRequest), 0);
 
-		// try to draw the requested amount of power
-		char result;
-		if (requested_amount <= 0) {
-			// filter input and disallow negative requests
-			printf("[SERVICE] Received a malformed or negative request; aborting power draw.\n");
-			result = '0';
+	// ensure correct number of request bytes
+	if (bytes_read != sizeof(PowerRequest)) {
+		// send an invalid request response
+		resp.req_type = 0;
+		resp.pwr_amount = 0;
+		resp.status_code = 2;
+		send(client_socket, &resp, sizeof(PowerResponse), 0);
+		close(client_socket);
+		return;
+	}
+
+	// translate bytes from network order
+	uint32_t req_amount = ntohl(req.pwr_amount);
+	resp.req_type = req.req_type;
+	resp.pwr_amount = req.pwr_amount;
+
+	// handle type 1 - power draw request
+	if (req.req_type == 1) {
+		// prevent negative requests and integer overflows
+		if (req_amount <= 0 || req_amount > PRODUCTION_RATE + BATTERY_MAX) {
+			resp.status_code = 2;
+			send(client_socket, &resp, sizeof(PowerResponse), 0);
 		} else {
-			result = draw_power(requested_amount);
+			// attempt the power draw and send response
+			resp.status_code = draw_power(req_amount);
+			send(client_socket, &resp, sizeof(PowerResponse), 0);
 		}
 
-		// send back '1' for success or '0' for failure
-		write(client_socket, &result, 1);
-		close(client_socket);
+	} else {
+		// unimplemented request type was used
+		resp.status_code = 2;
+		send(client_socket, &resp, sizeof(PowerResponse), 0);
 	}
+
+	close(client_socket);
 }
 
 int main() {
@@ -148,7 +160,7 @@ int main() {
 
     // Set up the server address
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     server_addr.sin_port = htons(PORT);
 
     // Bind the socket to the address

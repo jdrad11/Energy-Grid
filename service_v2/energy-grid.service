@@ -7,11 +7,11 @@ User=grid
 Group=grid
 Type=simple
 WorkingDirectory=/opt/energy-grid/
-ExecStart=/opt/energy-grid/energy-grid
+
+ExecStart=/opt/energy-grid/run-grid.sh
+
 Restart=no
 RestartSec=5
-StandardOutput=file:/var/log/energy-grid/grid.log
-StandardError=file:/var/log/energy-grid/grid.log
 
 [Install]
 WantedBy=multi-user.target
