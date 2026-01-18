@@ -43,7 +43,7 @@ The grid will respond to requests with a 6-byte response, sent in network byte o
 #### Fields and Options
 The response will mirror the first 5 bytes of the request, to help operators ensure the request was received correctly and for logging purposes.
 
-If too bytes are sent in the request, the first 5 bytes of the response will be set to null bytes. The 6th byte will contain the 0x02 status code.
+If too few bytes are sent in the request, the first 5 bytes of the response will be set to null bytes. The 6th byte will contain the 0x02 status code.
 
 req_type (1 byte):
 - 0x01 : power request
