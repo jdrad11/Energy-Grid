@@ -100,6 +100,16 @@ uint8_t draw_power(uint32_t amount) {
 // handle requests to the socket
 void handle_power_request(int client_socket) {
 
+	// prevent DOS on single-threaded socket
+	struct timeval tv;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+
+	if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+		close(client_socket);
+		return;
+	}
+
 	PowerRequest req;
 	PowerResponse resp;
 	int bytes_read;

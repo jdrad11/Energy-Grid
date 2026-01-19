@@ -8,7 +8,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 if ! command -v socat &> /dev/null; then
-	echo "Socat dependency is not installed, please install before deploying service"
+	echo "ncat dependency is not installed, please install before deploying service"
 	exit 1
 fi
 
