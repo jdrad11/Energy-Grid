@@ -8,7 +8,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 if ! command -v socat &> /dev/null; then
-	echo "ncat dependency is not installed, please install before deploying service"
+	echo "socat dependency is not installed, please install before deploying service"
 	exit 1
 fi
 
@@ -18,7 +18,7 @@ echo "grid service user added..."
 
 # create service folder and files
 mkdir -p /opt/energy-grid
-gcc -o "energy-grid" energy-grid.c
+gcc -o "energy-grid" energy-grid.c -lssl -lcrypto -pthread
 cp energy-grid /opt/energy-grid/
 cp run-grid.sh /opt/energy-grid/
 chmod +x /opt/energy-grid/run-grid.sh

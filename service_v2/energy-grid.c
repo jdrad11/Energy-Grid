@@ -8,6 +8,8 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 // definitions for socket
 #define PORT 8080
@@ -17,6 +19,10 @@
 #define PRODUCTION_RATE 100
 #define CYCLE_DURATION 5
 #define BATTERY_MAX 500
+
+// secrets for authentication
+#define SECRET "Password1!" // yes i am hardcoding this for now don't @ me it will be changed later to be different per team
+#define SECRET_LEN 10
 
 // global variables
 pthread_mutex_t lock;
@@ -28,15 +34,49 @@ int battery_power;
 typedef struct __attribute__((packed)) {
 	uint8_t req_type;
 	uint32_t pwr_amount;
+	uint8_t nonce[16];
+	uint8_t hmac[32];
 } PowerRequest;
 
 // structure for sending responses over socket protocol
-// mirrors request fields and sends 0 for failure, 1 for success, 2 for illegal or malformed request
+// mirrors request fields and sends 0 for failure, 1 for success, 2 for illegal or malformed request, 3 for authentication failure
 typedef struct __attribute__((packed)) {
 	uint8_t req_type;
 	uint32_t pwr_amount;
 	uint8_t status_code;
+	uint8_t nonce[16];
+	uint8_t hmac[32];
 } PowerResponse;
+
+// helper for printing hex bytes for testing auth
+void print_hex(const char *data_label, uint8_t *data, size_t len) {
+	printf("%s: ", data_label);
+	for (size_t i = 0; i < len; i++) {
+		printf("%02x", data[i]);
+	}
+	printf("\n");
+}
+
+// generate a nonce for auth
+void generate_nonce(uint8_t *nonce) {
+	if (RAND_bytes(nonce, 16) != 1) {
+		printf("Error generating nonce\n");
+		*nonce = 0;
+	}
+}
+
+/**
+ * calculate HMAC for auth
+ * HMAC calculation process:
+ * 1) fill req_type, pwr_amount, and status_code (if applicable)
+ * 2) fill nonce with generate_nonce
+ * 3) fill hmac with null bytes
+ * 4) fill hmac with calculate_hmac on the PowerRequest/PowerResponse structure
+**/
+void calculate_hmac(const uint8_t *request, size_t request_len, uint8_t *hmac) {
+	unsigned int len = 32;
+	HMAC(EVP_sha256(), SECRET, SECRET_LEN, request, request_len, hmac, &len);
+}
 
 // power generator function (ran as a thread)
 void* power_generator(void* arg) {
@@ -102,7 +142,7 @@ void handle_power_request(int client_socket) {
 
 	// prevent DOS on single-threaded socket
 	struct timeval tv;
-	tv.tv_sec = 1;
+	tv.tv_sec = 3;
 	tv.tv_usec = 0;
 
 	if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
@@ -119,37 +159,75 @@ void handle_power_request(int client_socket) {
 
 	// ensure correct number of request bytes
 	if (bytes_read != sizeof(PowerRequest)) {
-		// send an invalid request response
+		// send an invalid request response with zeroed user-provided fields
 		resp.req_type = 0;
 		resp.pwr_amount = 0;
 		resp.status_code = 2;
+		generate_nonce(resp.nonce);
+		memset(resp.hmac, 0, 32);
+		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
 		send(client_socket, &resp, sizeof(PowerResponse), 0);
 		close(client_socket);
 		return;
 	}
 
-	// translate bytes from network order
-	uint32_t req_amount = ntohl(req.pwr_amount);
+	// save the received HMAC and calculate the expected HMAC
+	uint8_t received_hmac[32];
+	memcpy(received_hmac, req.hmac, 32);
+	memset(req.hmac, 0, 32);
+
+	uint8_t calculated_hmac[32];
+	calculate_hmac((uint8_t*)&req, sizeof(PowerRequest) - 32, calculated_hmac);
+
+	/**
+	 * debugging stuff
+	 * print_hex("received_hmac", received_hmac, 32);
+	 * print_hex("calculated_hmac", calculated_hmac, 32);
+	**/
+
+	// mirror user-provided fields
 	resp.req_type = req.req_type;
 	resp.pwr_amount = req.pwr_amount;
+
+	// use secure memcmp to check HMAC authentication
+	if (CRYPTO_memcmp(received_hmac, calculated_hmac, 32) != 0) {
+		// authentication failure, received and calculated HMAC did not match
+		resp.status_code = 3;
+
+		generate_nonce(resp.nonce);
+		memset(resp.hmac, 0, 32);
+		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
+
+		send(client_socket, &resp, sizeof(PowerResponse), 0);
+		close(client_socket);
+		return;
+	}
+
+	// authentication was successful, received and calculated HMAC matched
+	// translate bytes from network order
+	uint32_t req_amount = ntohl(req.pwr_amount);
 
 	// handle type 1 - power draw request
 	if (req.req_type == 1) {
 		// prevent negative requests and integer overflows
 		if (req_amount <= 0 || req_amount > PRODUCTION_RATE + BATTERY_MAX) {
 			resp.status_code = 2;
-			send(client_socket, &resp, sizeof(PowerResponse), 0);
 		} else {
-			// attempt the power draw and send response
+			// attempt the power draw
 			resp.status_code = draw_power(req_amount);
-			send(client_socket, &resp, sizeof(PowerResponse), 0);
 		}
 
 	} else {
 		// unimplemented request type was used
 		resp.status_code = 2;
-		send(client_socket, &resp, sizeof(PowerResponse), 0);
 	}
+
+	// send signed server reponse to authenticated request
+	generate_nonce(resp.nonce);
+	memset(resp.hmac, 0, 32);
+	calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
+
+	send(client_socket, &resp, sizeof(PowerResponse), 0);
 
 	close(client_socket);
 }
