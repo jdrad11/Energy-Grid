@@ -10,5 +10,5 @@ x implement loop in main for keeping the server accepting reqests
 x clean up code and names to make it make sense for this service
 x add error catching to prevent crashes from malformed requests (or otherwise prevent crashes)
 x fix protocol and writeup a protocol specification when done
-- add authentication to requests ???
+x add authentication to requests ???
 - add some fun ways to exploit it ???

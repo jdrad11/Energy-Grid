@@ -24,6 +24,12 @@
 #define SECRET "Password1!" // yes i am hardcoding this for now don't @ me it will be changed later to be different per team
 #define SECRET_LEN 10
 
+// values for replay protection
+#define NONCE_HISTORY_SIZE 50
+uint64_t nonce_history[NONCE_HISTORY_SIZE];
+int nonce_history_head = 0;
+pthread_mutex_t nonce_lock;
+
 // global variables
 pthread_mutex_t lock;
 int cycle_power;
@@ -203,6 +209,40 @@ void handle_power_request(int client_socket) {
 		return;
 	}
 
+	// store the request nonce
+	uint64_t request_nonce;
+	memcpy(&request_nonce, req.nonce, sizeof(uint64_t));
+
+	pthread_mutex_lock(&nonce_lock);
+
+	// check if nonce has been seen before
+	int is_replay = 0;
+	for (int i = 0; i < NONCE_HISTORY_SIZE; i++) {
+		if (nonce_history[i] == request_nonce) {
+			is_replay = 1;
+			break;
+		}
+	}
+
+	// replay attack detected
+	if (is_replay) {
+		printf("Replay detected with nonce %lu!\n", request_nonce);
+
+		resp.status_code = 3;
+		generate_nonce(resp.nonce);
+		memset(resp.hmac, 0, 32);
+		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
+		send(client_socket, &resp, sizeof(PowerResponse), 0);
+		close(client_socket);
+		return;
+	}
+
+	// store the new nonce in the history via a rotating buffer
+	nonce_history[nonce_history_head] = request_nonce;
+	nonce_history_head = (nonce_history_head + 1) % NONCE_HISTORY_SIZE;
+
+	pthread_mutex_unlock(&nonce_lock);
+
 	// authentication was successful, received and calculated HMAC matched
 	// translate bytes from network order
 	uint32_t req_amount = ntohl(req.pwr_amount);
@@ -277,6 +317,8 @@ int main() {
 	// create and start the power generator thread
 	pthread_t generator;
 	pthread_create(&generator, NULL, power_generator, NULL);
+
+	pthread_mutex_init(&nonce_lock, NULL);
 
 	// keep the service listening for connections infinitely
     while (1) {
