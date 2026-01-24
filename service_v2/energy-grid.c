@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
+#include <sys/time.h>
+#include <signal.h>
 
 // definitions for socket
 #define PORT 8080
@@ -21,12 +23,13 @@
 #define BATTERY_MAX 500
 
 // secrets for authentication
-#define SECRET "Password1!" // yes i am hardcoding this for now don't @ me it will be changed later to be different per team
-#define SECRET_LEN 10
+#define MAX_SECRET_LEN 64
+uint8_t SECRET[MAX_SECRET_LEN];
+size_t SECRET_LEN = 0;
 
 // values for replay protection
-#define NONCE_HISTORY_SIZE 50
-uint64_t nonce_history[NONCE_HISTORY_SIZE];
+#define NONCE_HISTORY_SIZE 4096
+uint8_t nonce_history[NONCE_HISTORY_SIZE][16];
 int nonce_history_head = 0;
 pthread_mutex_t nonce_lock;
 
@@ -67,7 +70,7 @@ void print_hex(const char *data_label, uint8_t *data, size_t len) {
 void generate_nonce(uint8_t *nonce) {
 	if (RAND_bytes(nonce, 16) != 1) {
 		printf("Error generating nonce\n");
-		*nonce = 0;
+		memset(nonce, 0, 16);
 	}
 }
 
@@ -84,15 +87,36 @@ void calculate_hmac(const uint8_t *request, size_t request_len, uint8_t *hmac) {
 	HMAC(EVP_sha256(), SECRET, SECRET_LEN, request, request_len, hmac, &len);
 }
 
+// load the secret for authentication
+void load_secret(const char *filepath) {
+	FILE *f = fopen(filepath, "rb");
+	if (!f) {
+		perror("Failed to open secret file\n");
+		exit(1);
+	}
+
+	SECRET_LEN = fread(SECRET, 1, MAX_SECRET_LEN, f);
+	fclose(f);
+
+	if (SECRET_LEN == 0) {
+		fprintf(stderr, "No secret found in file\n");
+		exit(1);
+	}
+
+	if (SECRET[SECRET_LEN - 1] == '\n') {
+		SECRET_LEN--;
+	}
+}
+
 // power generator function (ran as a thread)
 void* power_generator(void* arg) {
 	printf("[GENERATOR] Energy grid generation service started. Producing %d power every %d seconds.\n", PRODUCTION_RATE, CYCLE_DURATION);
 
 	// this cycle will run continuously to act as the power generator
-	while (true) {
+	while (1) {
 		// use the lock to prevent race conditions
 		pthread_mutex_lock(&lock);
-		cycle_power += 100;
+		cycle_power += PRODUCTION_RATE;
 		printf("[GENERATOR] Generated %d power.\n", PRODUCTION_RATE);
 		pthread_mutex_unlock(&lock);
 
@@ -107,9 +131,9 @@ void* power_generator(void* arg) {
 		else {
 			battery_power = BATTERY_MAX;
 		}
-		pthread_mutex_unlock(&lock);
 		printf("[GENERATOR] Used %d power this cycle. Backup battery now storing %d power.\n", PRODUCTION_RATE-cycle_power, battery_power);
 		cycle_power = 0;
+		pthread_mutex_unlock(&lock);
 	}
 }
 
@@ -151,7 +175,14 @@ void handle_power_request(int client_socket) {
 	tv.tv_sec = 3;
 	tv.tv_usec = 0;
 
+	// prevent hanging on read
 	if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+		close(client_socket);
+		return;
+	}
+
+	// prevent hanging on send
+	if (setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
 		close(client_socket);
 		return;
 	}
@@ -160,8 +191,14 @@ void handle_power_request(int client_socket) {
 	PowerResponse resp;
 	int bytes_read;
 
-	// collect bytes to protocol spec (currently vulnerable to DOS by hanging because of MSG_WAITALL flag)
+	// collect bytes to protocol spec
 	bytes_read = recv(client_socket, &req, sizeof(PowerRequest), 0);
+
+	// close connections that send no data
+	if (bytes_read <= 0) {
+		close(client_socket);
+		return;
+	}
 
 	// ensure correct number of request bytes
 	if (bytes_read != sizeof(PowerRequest)) {
@@ -210,15 +247,13 @@ void handle_power_request(int client_socket) {
 	}
 
 	// store the request nonce
-	uint64_t request_nonce;
-	memcpy(&request_nonce, req.nonce, sizeof(uint64_t));
 
 	pthread_mutex_lock(&nonce_lock);
 
 	// check if nonce has been seen before
 	int is_replay = 0;
 	for (int i = 0; i < NONCE_HISTORY_SIZE; i++) {
-		if (nonce_history[i] == request_nonce) {
+		if (memcmp(nonce_history[i], req.nonce, 16) == 0) {
 			is_replay = 1;
 			break;
 		}
@@ -226,19 +261,20 @@ void handle_power_request(int client_socket) {
 
 	// replay attack detected
 	if (is_replay) {
-		printf("Replay detected with nonce %lu!\n", request_nonce);
+		print_hex("Replay detected with nonce ", req.nonce, 16);
 
 		resp.status_code = 3;
 		generate_nonce(resp.nonce);
 		memset(resp.hmac, 0, 32);
 		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
 		send(client_socket, &resp, sizeof(PowerResponse), 0);
+		pthread_mutex_unlock(&nonce_lock);
 		close(client_socket);
 		return;
 	}
 
 	// store the new nonce in the history via a rotating buffer
-	nonce_history[nonce_history_head] = request_nonce;
+	memcpy(nonce_history[nonce_history_head], req.nonce, 16);
 	nonce_history_head = (nonce_history_head + 1) % NONCE_HISTORY_SIZE;
 
 	pthread_mutex_unlock(&nonce_lock);
@@ -250,7 +286,7 @@ void handle_power_request(int client_socket) {
 	// handle type 1 - power draw request
 	if (req.req_type == 1) {
 		// prevent negative requests and integer overflows
-		if (req_amount <= 0 || req_amount > PRODUCTION_RATE + BATTERY_MAX) {
+		if (req_amount == 0 || req_amount > PRODUCTION_RATE + BATTERY_MAX) {
 			resp.status_code = 2;
 		} else {
 			// attempt the power draw
@@ -272,7 +308,29 @@ void handle_power_request(int client_socket) {
 	close(client_socket);
 }
 
-int main() {
+// used for creating a socket thread
+void* request_handler(void* socket) {
+	int client_socket = *(int*)socket;
+
+	free(socket);
+
+	handle_power_request(client_socket);
+
+	return NULL;
+}
+
+int main(int argc, char *argv[]) {
+	// stop service from crashing on a failed send
+	signal(SIGPIPE, SIG_IGN);
+
+	// load the secret at startup
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <secret_file>\n", argv[0]);
+		exit(EXIT_FAILURE);
+	}
+
+	load_secret(argv[1]);
+
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	setvbuf(stdout, NULL, _IONBF, 0);
 	int server_socket, client_socket;
@@ -322,18 +380,37 @@ int main() {
 
 	// keep the service listening for connections infinitely
     while (1) {
-		// Accept a single client connection (single-threaded)
+		// Accept a client connection
 		client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
 		if (client_socket < 0) {
 	    	perror("Client accept failed");
-	    	close(server_socket);
-	    	exit(EXIT_FAILURE);
+			continue;
 		}
 
 		printf("Client connected!\n");
 
-		// Handle communication with the connected client
-		handle_power_request(client_socket);
+		// allocate memory for passing the socket to the thread
+		int *new_socket = malloc(sizeof(int));
+		if (new_socket == NULL) {
+			perror("Failed to allocate memory for new socket");
+			close(client_socket);
+			continue;
+		}
+
+		*new_socket = client_socket;
+
+		pthread_t client_thread;
+
+		// create a new thread for the client connection
+		if (pthread_create(&client_thread, NULL, request_handler, (void*)new_socket) < 0) {
+			perror("Could not create thread");
+			free(new_socket);
+			close(client_socket);
+			continue;
+		}
+
+		// client thread will release resources when finished
+		pthread_detach(client_thread);
     }
 
     // Close the server socket

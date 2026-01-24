@@ -21,6 +21,7 @@ mkdir -p /opt/energy-grid
 gcc -o "energy-grid" energy-grid.c -lssl -lcrypto -pthread
 cp energy-grid /opt/energy-grid/
 cp run-grid.sh /opt/energy-grid/
+echo -n "Password1!" > /opt/energy-grid/secret.env
 chmod +x /opt/energy-grid/run-grid.sh
 cp energy-grid.service /etc/systemd/system/
 chown -R grid:grid /opt/energy-grid
