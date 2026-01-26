@@ -11,4 +11,5 @@ x clean up code and names to make it make sense for this service
 x add error catching to prevent crashes from malformed requests (or otherwise prevent crashes)
 x fix protocol and writeup a protocol specification when done
 x add authentication to requests ???
-- add some fun ways to exploit it ???
+- add a way to exploit it ?
+- update documentation

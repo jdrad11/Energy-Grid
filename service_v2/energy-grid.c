@@ -19,13 +19,14 @@
 
 // definitions for power generator
 #define PRODUCTION_RATE 100
-#define CYCLE_DURATION 5
+#define CYCLE_DURATION 120
 #define BATTERY_MAX 500
 
 // secrets for authentication
 #define MAX_SECRET_LEN 64
 uint8_t SECRET[MAX_SECRET_LEN];
 size_t SECRET_LEN = 0;
+const char *SECRET_FILEPATH;
 
 // values for replay protection
 #define NONCE_HISTORY_SIZE 4096
@@ -70,7 +71,7 @@ void print_hex(const char *data_label, uint8_t *data, size_t len) {
 void generate_nonce(uint8_t *nonce) {
 	if (RAND_bytes(nonce, 16) != 1) {
 		printf("Error generating nonce\n");
-		memset(nonce, 0, 16);
+		memset(nonce, 1, 16);
 	}
 }
 
@@ -88,24 +89,29 @@ void calculate_hmac(const uint8_t *request, size_t request_len, uint8_t *hmac) {
 }
 
 // load the secret for authentication
-void load_secret(const char *filepath) {
+// returns 1 on successful load, 0 on failure
+int load_secret(const char *filepath) {
+	memset(SECRET, 0, MAX_SECRET_LEN);
+
 	FILE *f = fopen(filepath, "rb");
 	if (!f) {
-		perror("Failed to open secret file\n");
-		exit(1);
+		fprintf(stderr, "Failed to open secret file at %s\n", filepath);
+		return 0;
 	}
 
 	SECRET_LEN = fread(SECRET, 1, MAX_SECRET_LEN, f);
 	fclose(f);
 
 	if (SECRET_LEN == 0) {
-		fprintf(stderr, "No secret found in file\n");
-		exit(1);
+		fprintf(stderr, "No secret found in file %s\n", filepath);
+		return 0;
 	}
 
 	if (SECRET[SECRET_LEN - 1] == '\n') {
 		SECRET_LEN--;
 	}
+
+	return 1;
 }
 
 // power generator function (ran as a thread)
@@ -170,9 +176,14 @@ uint8_t draw_power(uint32_t amount) {
 // handle requests to the socket
 void handle_power_request(int client_socket) {
 
-	// prevent DOS on single-threaded socket
+	if (!load_secret(SECRET_FILEPATH)) {
+		close(client_socket);
+		return;
+	}
+
+	// prevent DOS on socket
 	struct timeval tv;
-	tv.tv_sec = 3;
+	tv.tv_sec = 1;
 	tv.tv_usec = 0;
 
 	// prevent hanging on read
@@ -187,31 +198,18 @@ void handle_power_request(int client_socket) {
 		return;
 	}
 
-	PowerRequest req;
-	PowerResponse resp;
-	int bytes_read;
+	PowerRequest req = {0};
+	PowerResponse resp = {0};
 
-	// collect bytes to protocol spec
-	bytes_read = recv(client_socket, &req, sizeof(PowerRequest), 0);
-
-	// close connections that send no data
-	if (bytes_read <= 0) {
-		close(client_socket);
-		return;
-	}
-
-	// ensure correct number of request bytes
-	if (bytes_read != sizeof(PowerRequest)) {
-		// send an invalid request response with zeroed user-provided fields
-		resp.req_type = 0;
-		resp.pwr_amount = 0;
-		resp.status_code = 2;
-		generate_nonce(resp.nonce);
-		memset(resp.hmac, 0, 32);
-		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
-		send(client_socket, &resp, sizeof(PowerResponse), 0);
-		close(client_socket);
-		return;
+	// collect bytes to protocol spec and reject hanging requests
+	size_t got = 0;
+	while (got < sizeof(PowerRequest)) {
+    	ssize_t r = recv(client_socket, ((char*)&req) + got, sizeof(PowerRequest) - got, 0);
+    	if (r <= 0) {
+        	close(client_socket);
+        	return;
+    	}
+    	got += r;
 	}
 
 	// save the received HMAC and calculate the expected HMAC
@@ -241,7 +239,15 @@ void handle_power_request(int client_socket) {
 		memset(resp.hmac, 0, 32);
 		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
 
-		send(client_socket, &resp, sizeof(PowerResponse), 0);
+		size_t sent = 0;
+		while (sent < sizeof(PowerResponse)) {
+    		ssize_t s = send(client_socket, ((char*)&resp) + sent, sizeof(PowerResponse) - sent, 0);
+    		if (s <= 0) {
+        		close(client_socket);
+        		return;
+    		}
+    		sent += s;
+		}
 		close(client_socket);
 		return;
 	}
@@ -267,7 +273,15 @@ void handle_power_request(int client_socket) {
 		generate_nonce(resp.nonce);
 		memset(resp.hmac, 0, 32);
 		calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
-		send(client_socket, &resp, sizeof(PowerResponse), 0);
+		size_t sent = 0;
+		while (sent < sizeof(PowerResponse)) {
+    		ssize_t s = send(client_socket, ((char*)&resp) + sent, sizeof(PowerResponse) - sent, 0);
+    		if (s <= 0) {
+        		close(client_socket);
+        		return;
+    		}
+    		sent += s;
+		}
 		pthread_mutex_unlock(&nonce_lock);
 		close(client_socket);
 		return;
@@ -303,9 +317,18 @@ void handle_power_request(int client_socket) {
 	memset(resp.hmac, 0, 32);
 	calculate_hmac((uint8_t*)&resp, sizeof(PowerResponse) - 32, resp.hmac);
 
-	send(client_socket, &resp, sizeof(PowerResponse), 0);
+	size_t sent = 0;
+	while (sent < sizeof(PowerResponse)) {
+    	ssize_t s = send(client_socket, ((char*)&resp) + sent, sizeof(PowerResponse) - sent, 0);
+    	if (s <= 0) {
+        	close(client_socket);
+        	return;
+    	}
+    	sent += s;
+	}
 
 	close(client_socket);
+	OPENSSL_cleanse(SECRET, SECRET_LEN);
 }
 
 // used for creating a socket thread
@@ -329,7 +352,8 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	load_secret(argv[1]);
+	//load_secret(argv[1]);
+	SECRET_FILEPATH = argv[1];
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -383,7 +407,7 @@ int main(int argc, char *argv[]) {
 		// Accept a client connection
 		client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
 		if (client_socket < 0) {
-	    	perror("Client accept failed");
+	    	perror("Client accept failed\n");
 			continue;
 		}
 
@@ -392,7 +416,7 @@ int main(int argc, char *argv[]) {
 		// allocate memory for passing the socket to the thread
 		int *new_socket = malloc(sizeof(int));
 		if (new_socket == NULL) {
-			perror("Failed to allocate memory for new socket");
+			perror("Failed to allocate memory for new socket\n");
 			close(client_socket);
 			continue;
 		}
