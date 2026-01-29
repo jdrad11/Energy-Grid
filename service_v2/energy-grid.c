@@ -39,6 +39,9 @@ pthread_mutex_t lock;
 int cycle_power;
 int battery_power;
 
+// lock for protecting secret in memory
+pthread_mutex_t secret_lock;
+
 // stucture for receiving requests over socket protocol
 // expects type 1 for power draw request
 typedef struct __attribute__((packed)) {
@@ -175,11 +178,6 @@ uint8_t draw_power(uint32_t amount) {
 
 // handle requests to the socket
 void handle_power_request(int client_socket) {
-
-	if (!load_secret(SECRET_FILEPATH)) {
-		close(client_socket);
-		return;
-	}
 
 	// prevent DOS on socket
 	struct timeval tv;
@@ -328,7 +326,6 @@ void handle_power_request(int client_socket) {
 	}
 
 	close(client_socket);
-	OPENSSL_cleanse(SECRET, SECRET_LEN);
 }
 
 // used for creating a socket thread
@@ -352,8 +349,12 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	//load_secret(argv[1]);
+	// load the secret at startup (requires restart if secret is changed)
 	SECRET_FILEPATH = argv[1];
+	if (!load_secret(SECRET_FILEPATH)) {
+		fprintf(stderr, "Failed to load secret from filepath %s\n", SECRET_FILEPATH);
+		exit(1);
+	}
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -400,7 +401,9 @@ int main(int argc, char *argv[]) {
 	pthread_t generator;
 	pthread_create(&generator, NULL, power_generator, NULL);
 
+	// initialize locks for preventing nonce and secret corruption
 	pthread_mutex_init(&nonce_lock, NULL);
+	pthread_mutex_init(&secret_lock, NULL);
 
 	// keep the service listening for connections infinitely
     while (1) {
