@@ -39,9 +39,6 @@ pthread_mutex_t lock;
 int cycle_power;
 int battery_power;
 
-// lock for protecting secret in memory
-pthread_mutex_t secret_lock;
-
 // stucture for receiving requests over socket protocol
 // expects type 1 for power draw request
 typedef struct __attribute__((packed)) {
@@ -401,9 +398,8 @@ int main(int argc, char *argv[]) {
 	pthread_t generator;
 	pthread_create(&generator, NULL, power_generator, NULL);
 
-	// initialize locks for preventing nonce and secret corruption
+	// initialize lock for nonce history
 	pthread_mutex_init(&nonce_lock, NULL);
-	pthread_mutex_init(&secret_lock, NULL);
 
 	// keep the service listening for connections infinitely
     while (1) {
