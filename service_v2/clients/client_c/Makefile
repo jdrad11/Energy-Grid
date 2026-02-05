@@ -1,4 +1,4 @@
-CC = g++
+CC = gcc
 
 all: test-client
 
