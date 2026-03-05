@@ -13,5 +13,9 @@ ExecStart=/opt/energy-grid/run-grid.sh
 Restart=no
 RestartSec=5
 
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
 [Install]
 WantedBy=multi-user.target
