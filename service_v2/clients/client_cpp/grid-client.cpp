@@ -114,6 +114,8 @@ int request_power(const char *server_ip, uint16_t port, const char *secret_file,
 		got += n;
 	}
 
+/** This section checks the server response to prevent man in the middle. It has been commented out to allow this type of attack.
+
 	// validate the server hmac auth
     uint8_t recv_hmac[32];
     memcpy(recv_hmac, resp.hmac, 32);
@@ -126,6 +128,11 @@ int request_power(const char *server_ip, uint16_t port, const char *secret_file,
 
     if (CRYPTO_memcmp(recv_hmac, calc_hmac, 32) != 0)
         return 3;
+
+**/
+
+	// remove this if man in the middle protected is reenabled later to prevent trying to close the socket twice
+	close(sock);
 
 	// remove the secret from memory and return the server response
 	OPENSSL_cleanse(secret, secret_len);
