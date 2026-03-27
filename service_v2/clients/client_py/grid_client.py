@@ -91,8 +91,8 @@ def request_power(ip, port, secret_file, amount):
 
     r_type, pwr_amount, status, rnonce, rhmac = struct.unpack(RESP_FMT, resp_raw)
 
-# this section checks the server response to prevent man in the middle. It has been commented out to allow this type of attack.
-'''
+    # this section checks the server response to prevent man in the middle. It has been commented out to allow this type of attack.
+    '''
     # authenticate the server response
     zeroed = struct.pack(
         RESP_FMT,
@@ -109,7 +109,7 @@ def request_power(ip, port, secret_file, amount):
     if not hmac.compare_digest(rhmac, expected):
         # print("Bad response HMAC")
         status = 3
-'''
+    '''
     # zero the secret and return status code received from the server
     secret = b'\x00' * len(secret)
     return status
