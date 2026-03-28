@@ -1,0 +1,17 @@
+[Unit]
+Description=Energy Grid Simulation Service
+After=network.target
+
+[Service]
+User=grid
+Group=grid
+Type=simple
+WorkingDirectory=/opt/energy-grid/
+ExecStart=/usr/bin/python3 -u grid-api.py
+Restart=no
+RestartSec=5
+StandardOutput=file:/var/log/energy-grid/grid.log
+StandardError=file:/var/log/energy-grid/grid.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+here are the things to do for development of the c implementation
+boiler plate code is from basic chat server implementation of sockets
+
+x add global lock and energy grid variables
+x add generator function and implement it as a background thread
+x add function to draw x power from the grid (to be called from handle_power_request)
+x update power request handler function to correctly deal with requests
+x add lock to prevent race conditions
+x implement loop in main for keeping the server accepting reqests
+x clean up code and names to make it make sense for this service
+x add error catching to prevent crashes from malformed requests (or otherwise prevent crashes)
+x fix protocol and writeup a protocol specification when done
+x add authentication to requests ???
+- add a way to exploit it ?
+- update documentation
